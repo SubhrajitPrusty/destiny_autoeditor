@@ -1,4 +1,5 @@
 import os
+import sys
 import cv2
 import click
 import imutils
@@ -10,6 +11,9 @@ from loguru import logger
 from fuzzywuzzy import fuzz
 from AutoQueue import AutoQueue
 import matplotlib.pyplot as plt
+
+logger.add(sys.stderr, level='WARNING')
+logger.remove(0) # workaround for log level
 
 GLOBAL_BUFFER = AutoQueue(7*60)
 CLIP_COUNTER = 0
@@ -60,13 +64,13 @@ def parse_text(text, ign='Rider'):
 	pred = fuzz.partial_ratio(text, ign)
 	if len(text) > len(ign):
 		if pred > 80:
-			logger.info(text)
+			logger.debug('text')
 			return True
 	return False
 
-def check_kill(image):
+def check_kill(image, ign):
 	text = ocr(image)
-	return parse_text(text)
+	return parse_text(text, ign)
 
 def make_clip():
 	global CLIP_COUNTER
@@ -82,69 +86,91 @@ def make_clip():
 		frame = BUFFER_COPY.get(block=False)
 		clip.write(frame)
 
-	logger.debug(f'clip saved {clip_name}')
+	click.secho(f'clip saved at {clip_name}', fg='green')
 
 @click.command()
 @click.argument('filename', type=click.Path(exists=True), default=None)
-def main(filename):
-	# click.echo('press q')
-	video = cv2.VideoCapture(filename)
+@click.argument('ign', type=str)
+@click.option('--log', '-l', type=click.Choice(['DEBUG', 'INFO', 'WARNING']), default='WARNING')
+@logger.catch
+def main(filename, ign, log):
+	try:
+		click.secho('Ctrl+C to abort.', fg='yellow')
+		# click.echo('press q')
+		video = cv2.VideoCapture(filename)
 
-	if not video.isOpened():
-		logger.error('Error opening file.')
-		raise Exception('FileOpenError')
-
-	frames = 0
-	KILL_CHECK = False
-	KILL_FRAME = 0
-	CHECK = True
-	# while frames <= 300:
-	while True:
-		frames += 1
-		ret, img = video.read()
-		if ret:
-			GLOBAL_BUFFER.put(img)
-			resized_image = imutils.resize(img, width=1024) # coz costly to work on full resolution
-			cropped, masked = roi(resized_image)
-			rotated = straighten(cropped) # straighten the image
-			zoomed = imutils.resize(rotated, width=1000)
-			# masked = mask_color(zoomed)
-			gray = cv2.cvtColor(zoomed, cv2.COLOR_BGR2GRAY)
-
-			# threshold = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-			ret, threshold = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY_INV) #barely works, but works
-			img_rgb = cv2.cvtColor(threshold, cv2.COLOR_BGR2RGB)
-			# img_rgb = cv2.cvtColor(masked, cv2.COLOR_BGR2RGB)
-
-			# cv2.imshow('window', resized_image)
-			print('\r', f'frame: {frames}', end='')
-			# if cv2.waitKey(25) & 0xFF == ord('q'):
-			# 	break
+		if not video.isOpened():
+			logger.error('Error opening file.')
+			raise Exception('FileOpenError')
 
 
-			if CHECK:
-				KILL_CHECK = check_kill(img_rgb)
-				if KILL_CHECK:
-					KILL_FRAME = frames + 120
-					logger.debug(f'KILL FOUND at {frames}\nKILL FRAME is {KILL_FRAME}')
-					CHECK = False
-				elif KILL_CHECK and frames < KILL_FRAME:
-					CHECK = False
-					continue
+		if log:
+			logger.add(sys.stderr, level=log)
+			logger.remove(1)
 
-			if KILL_CHECK and frames == KILL_FRAME:
-				make_clip()
-				KILL_CHECK = False
-				CHECK = True
+		frames = 0
+		KILL_CHECK = False
+		KILL_FRAME = 0
+		CHECK = True
+		# while frames <= 300:
+		while True:
+			frames += 1
+			ret, img = video.read()
+			if ret:
+				GLOBAL_BUFFER.put(img)
+				resized_image = imutils.resize(img, width=1024) # coz costly to work on full resolution
+				cropped, masked = roi(resized_image)
+				rotated = straighten(cropped) # straighten the image
+				zoomed = imutils.resize(rotated, width=1000)
+				# masked = mask_color(zoomed)
+				gray = cv2.cvtColor(zoomed, cv2.COLOR_BGR2GRAY)
 
+				# threshold = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+				ret, threshold = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY_INV) #barely works, but works
+				img_rgb = cv2.cvtColor(threshold, cv2.COLOR_BGR2RGB)
+				# img_rgb = cv2.cvtColor(masked, cv2.COLOR_BGR2RGB)
+
+				# cv2.imshow('window', resized_image)
+				print('\r', f'frame: {frames}', end='')
+				# if cv2.waitKey(25) & 0xFF == ord('q'):
+				# 	break
+
+
+				if CHECK:
+					KILL_CHECK = check_kill(img_rgb, ign)
+					if KILL_CHECK:
+						KILL_FRAME = frames + 120
+						click.secho(f'KILL FOUND at {frames}\nKILL FRAME is {KILL_FRAME}', fg='red')
+						CHECK = False
+					elif KILL_CHECK and frames < KILL_FRAME:
+						CHECK = False
+						continue
+
+				if KILL_CHECK and frames == KILL_FRAME:
+					make_clip()
+					KILL_CHECK = False
+					CHECK = True
+
+			else:
+				break
+
+		del video
+	except KeyboardInterrupt:
+		pass
+	except Exception as e:
+		logger.error(e)
+		raise e
+	finally:
+		click.secho('Finished processing.', fg='green')
+		if CLIP_COUNTER == 0:
+			click.secho('No clips found. :(', fg='red')
 		else:
-			break
+			click.secho(f'{CLIP_COUNTER} clips found.', fg='green')
 
-	logger.debug('finished processing')
-	video.release()
-	cv2.destroyAllWindows()
+		video.release()
+		cv2.destroyAllWindows()
 
-	del video
 
 if __name__ == '__main__':
 	main()
+	del GLOBAL_BUFFER
