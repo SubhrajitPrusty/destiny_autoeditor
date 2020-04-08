@@ -1,0 +1,7 @@
+opencv-python
+fuzzywuzzy[speedup]
+loguru
+imutils
+matplotlib
+numpy
+pytesseract
