@@ -1,14 +1,15 @@
 import os
 import cv2
+import click
 import imutils
 import numpy as np
 import pytesseract
 from time import sleep
 from copy import deepcopy
 from loguru import logger
+from fuzzywuzzy import fuzz
 from AutoQueue import AutoQueue
 import matplotlib.pyplot as plt
-from fuzzywuzzy import fuzz
 
 GLOBAL_BUFFER = AutoQueue(7*60)
 CLIP_COUNTER = 0
@@ -83,10 +84,11 @@ def make_clip():
 
 	logger.debug(f'clip saved {clip_name}')
 
-
-def main():
-	video = cv2.VideoCapture('demo.mp4')
-	
+@click.command()
+@click.argument('filename', type=click.Path(exists=True), default=None)
+def main(filename):
+	# click.echo('press q')
+	video = cv2.VideoCapture(filename)
 
 	if not video.isOpened():
 		logger.error('Error opening file.')
@@ -114,10 +116,10 @@ def main():
 			img_rgb = cv2.cvtColor(threshold, cv2.COLOR_BGR2RGB)
 			# img_rgb = cv2.cvtColor(masked, cv2.COLOR_BGR2RGB)
 
-			cv2.imshow('window', resized_image)
+			# cv2.imshow('window', resized_image)
 			print('\r', f'frame: {frames}', end='')
-			if cv2.waitKey(25) & 0xFF == ord('q'):
-				break
+			# if cv2.waitKey(25) & 0xFF == ord('q'):
+			# 	break
 
 
 			if CHECK:
