@@ -1,3 +1,4 @@
+import os
 import cv2
 import imutils
 import numpy as np
@@ -7,9 +8,9 @@ from copy import deepcopy
 from loguru import logger
 from AutoQueue import AutoQueue
 import matplotlib.pyplot as plt
-from fuzzywuzzy.fuzz import partial_ratio
+from fuzzywuzzy import fuzz
 
-GLOBAL_BUFFER = AutoQueue(4*60) # 4 seconds = 4 x 60 frames
+GLOBAL_BUFFER = AutoQueue(7*60)
 CLIP_COUNTER = 0
 
 def mask_color(image):
@@ -55,9 +56,11 @@ def ocr(image):
 	return text
 
 def parse_text(text, ign='Rider'):
-	pred = partial_ratio(text, ign)
-	if pred > 90:
-		return True
+	pred = fuzz.partial_ratio(text, ign)
+	if len(text) > len(ign):
+		if pred > 80:
+			logger.info(text)
+			return True
 	return False
 
 def check_kill(image):
@@ -68,19 +71,21 @@ def make_clip():
 	global CLIP_COUNTER
 	global GLOBAL_BUFFER
 	CLIP_COUNTER += 1
-	clip_name = f'clip_{CLIP_COUNTER}.avi'
+	clip_name = os.path.join('clips', f'clip_{CLIP_COUNTER}.avi')
 	fourcc = cv2.VideoWriter_fourcc(*'XVID')
 	clip = cv2.VideoWriter(clip_name, fourcc, 60, (1920, 1080))
 
-	while not GLOBAL_BUFFER.empty():
-		frame = GLOBAL_BUFFER.get(block=False)
+	BUFFER_COPY = AutoQueue()
+	BUFFER_COPY.queue = deepcopy(GLOBAL_BUFFER.queue)
+	while not BUFFER_COPY.empty():
+		frame = BUFFER_COPY.get(block=False)
 		clip.write(frame)
 
 	logger.debug(f'clip saved {clip_name}')
 
 
 def main():
-	video = cv2.VideoCapture('output.mp4')
+	video = cv2.VideoCapture('demo.mp4')
 	
 
 	if not video.isOpened():
@@ -89,6 +94,8 @@ def main():
 
 	frames = 0
 	KILL_CHECK = False
+	KILL_FRAME = 0
+	CHECK = True
 	# while frames <= 300:
 	while True:
 		frames += 1
@@ -107,22 +114,27 @@ def main():
 			img_rgb = cv2.cvtColor(threshold, cv2.COLOR_BGR2RGB)
 			# img_rgb = cv2.cvtColor(masked, cv2.COLOR_BGR2RGB)
 
-			if not KILL_CHECK:
-				KILL_CHECK = check_kill(img_rgb)
-			else:
-				logger.debug('KILL FOUND')
-				# kill_frame = frames
-				# if frames <= kill_frame + 60:
-				# 	KILL_CHECK = True
-				# else:
-				KILL_CHECK = False
-				make_clip()
-
-			cv2.imshow('window', img_rgb)
+			cv2.imshow('window', resized_image)
+			print('\r', f'frame: {frames}', end='')
 			if cv2.waitKey(25) & 0xFF == ord('q'):
 				break
 
-			logger.debug(f'frame: {frames}')
+
+			if CHECK:
+				KILL_CHECK = check_kill(img_rgb)
+				if KILL_CHECK:
+					KILL_FRAME = frames + 120
+					logger.debug(f'KILL FOUND at {frames}\nKILL FRAME is {KILL_FRAME}')
+					CHECK = False
+				elif KILL_CHECK and frames < KILL_FRAME:
+					CHECK = False
+					continue
+
+			if KILL_CHECK and frames == KILL_FRAME:
+				make_clip()
+				KILL_CHECK = False
+				CHECK = True
+
 		else:
 			break
 
@@ -134,4 +146,3 @@ def main():
 
 if __name__ == '__main__':
 	main()
-	print(GLOBAL_BUFFER.qsize())
