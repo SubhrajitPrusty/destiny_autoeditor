@@ -5,3 +5,4 @@ imutils
 matplotlib
 numpy
 pytesseract
+click
